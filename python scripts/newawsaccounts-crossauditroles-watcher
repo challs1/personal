@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+""" 
+Description - This script can get the list of aws accounts and write data to dynamodb with crossacc role,scout2 data s3bucket key details for each account "
+
+INPUT- accounts API and Master Account details from SharedServices 
+
+Requrements - python3, imported libraries, aws crossaccount role,dynamodb.
+
+Runs on - Weekly Basis
+
+Output - Writing data to dynamodbTable
+
+Purpose - Accounts list and crossaccount role information for security audit"""
+__author__ = "Chenna Vemula,Brian Rossi"
+__COPYRIGHT__ = " Copyright 2018 , Caterpillar"
+__email__ = " chenna_vemula@cat.com"
+__version__ = " 0.0.2-(10/18/2018)"
+import boto3
+import traceback
+import itertools
+import json
+import pprint
+import re
+import botocore
+import logging
+import tempfile
+import time
+import os
+import datetime
+from datetime import timedelta, date, datetime
+from botocore.exceptions import ClientError, BotoCoreError
+sts = boto3.client('sts')
+#boto3.client('sts').get_caller_identity().get('Account')
+dynomodb = boto3.resource('dynamodb')
+dynamodb_client = boto3.client('dynamodb')  # conection to the dynamo db
+ac_table_name='awsaccounts-crossaccountrole-list'
+ss_ac_table_name='accountlist'
+primarykey='AccountID'
+today_date=datetime.now()
+running_date=today_date.strftime("%m-%d-%Y")
+def lambda_handler(event, context):
+    #verifyLogTable(ac_table_name,primarykey)
+    ac_table = dynomodb.Table(verifyLogTable(ac_table_name,primarykey))
+    sts_role = 'arn:aws:iam::656990482673:role/AWSAudit_CrossAccount'  # Org Billing API 
+    assumedRoleObject = sts.assume_role(RoleArn=str(sts_role), RoleSessionName="accounts_watcher_lambda" )
+    credentials = assumedRoleObject['Credentials']
+    conn = boto3.client( 'organizations', aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'],)
+    #list_of_accounts = conn.list_accounts()
+    ss_ac_list=scan_table_from_ss(ss_ac_table_name)
+    print("From SS", ss_ac_list)
+    done= False
+    NextToken = None
+    while not done:
+        if NextToken:
+            list_of_accounts = conn.list_accounts(NextToken=NextToken)
+            print(list_of_accounts)
+            Account_List = list_of_accounts['Accounts']
+            for values in Account_List:
+                account_info[values['Id']]={} 
+                account_info[values['Id']]['Name']=values['Name']
+                account_info[values['Id']]['Email']=values['Email']
+                account_info[values['Id']]['Status']=values['Status']
+                account_info[values['Id']]['JoinedMethod']=values['JoinedMethod']
+                account_info[values['Id']]['JoinedTimestamp']=str(values['JoinedTimestamp'])
+                try:
+                    account_info[values['Id']]['Department']=ss_ac_list[values['Id']]['Department'] 
+                    account_info[values['Id']]['Division']=ss_ac_list[values['Id']]['Division'] 
+                    account_info[values['Id']]['Managedby']=ss_ac_list[values['Id']]['ManagedBy'] 
+                    account_info[values['Id']]['Type']=ss_ac_list[values['Id']]['Type_Acc'] 
+                    account_info[values['Id']]['Businessowner']=ss_ac_list[values['Id']]['businessowner'] 
+                    account_info[values['Id']]['Techowner']=ss_ac_list[values['Id']]['techowner'] 
+                    account_info[values['Id']]['Dataclassification']=ss_ac_list[values['Id']]['dataclassification'] 
+                except KeyError:
+                    account_info[values['Id']]['Department']="None"
+                    account_info[values['Id']]['Division']=  "None"
+                    account_info[values['Id']]['Managedby']=  "None"
+                    account_info[values['Id']]['Type']=   "None"
+                    account_info[values['Id']]['Businessowner']=  "None"
+                    account_info[values['Id']]['Techowner']=  "None"
+                    account_info[values['Id']]['Dataclassification']=   "None"
+                if values['Id']=='478226638351':
+                    auditrole='arn:aws:iam::478226638351:role/Scout2MgmtEc2Role'
+                    account_info[values['Id']]['CrossAuditRole']=auditrole
+                    account_info[values['Id']]['ac_alias']=boto3.client('iam').list_account_aliases()['AccountAliases'][0]
+                    account_info[values['Id']]['scout2datas3key']=values['Id']+'/'+running_date+'/inc-awsconfig/'+'aws_config.js'
+                    print("Alias Info",iam_client.list_account_aliases()['AccountAliases'])
+                    #print(account_info)
+                    writedatatodynamodb(ac_table,account_info[values['Id']],values['Id'])
+                    continue
+                account_info[values['Id']]['CrossAuditRole']='arn:aws:iam::'+values['Id']+':role/AWSAudit_CrossAccount'
+                try:
+                    assumedRoleObject = sts.assume_role(RoleArn=str('arn:aws:iam::'+values['Id']+':role/AWSAudit_CrossAccount'), RoleSessionName="account_info_lambda")
+                    credentials = assumedRoleObject['Credentials']
+                    iam_client = boto3.client('iam',aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'],)
+                    account_info[values['Id']]['CrossAuditRole']='arn:aws:iam::'+values['Id']+':role/AWSAudit_CrossAccount'
+                #except ClientError:
+                except (ClientError, BotoCoreError) as err:
+                    logging.exception(err)
+                    account_info[values['Id']]['CrossAuditRole']='NotFound'
+                    account_info[values['Id']]['ac_alias']='UnabletoRead'
+                    account_info[values['Id']]['scout2datas3key']='N/A'
+                    writedatatodynamodb(ac_table,account_info[values['Id']],values['Id'])
+                    continue
+                account_info[values['Id']]['ac_alias']=iam_client.list_account_aliases()['AccountAliases'][0]
+                account_info[values['Id']]['scout2datas3key']=values['Id']+'/'+running_date+'/inc-awsconfig/'+'aws_config-'+account_info[values['Id']]['ac_alias']+'.js'
+                print("Alisas Info",iam_client.list_account_aliases()['AccountAliases'])
+                #print(account_info)
+                writedatatodynamodb(ac_table,account_info[values['Id']],values['Id'])
+                cleardict(account_info)   
+        else:
+            list_of_accounts = conn.list_accounts()
+            print(list_of_accounts)
+            Account_List = list_of_accounts['Accounts']
+            account_info={}
+            for values in Account_List:
+                account_info[values['Id']]={}
+                #print(values)
+                account_info[values['Id']]['Name']=values['Name']
+                account_info[values['Id']]['Email']=values['Email']
+                account_info[values['Id']]['Status']=values['Status']
+                account_info[values['Id']]['JoinedMethod']=values['JoinedMethod']
+                account_info[values['Id']]['JoinedTimestamp']=str(values['JoinedTimestamp'])
+                try:
+                    account_info[values['Id']]['Department']=ss_ac_list[values['Id']]['Department'] 
+                    account_info[values['Id']]['Division']=ss_ac_list[values['Id']]['Division'] 
+                    account_info[values['Id']]['Managedby']=ss_ac_list[values['Id']]['ManagedBy'] 
+                    account_info[values['Id']]['Type']=ss_ac_list[values['Id']]['Type_Acc'] 
+                    account_info[values['Id']]['Businessowner']=ss_ac_list[values['Id']]['businessowner'] 
+                    account_info[values['Id']]['Techowner']=ss_ac_list[values['Id']]['techowner'] 
+                    account_info[values['Id']]['Dataclassification']=ss_ac_list[values['Id']]['dataclassification'] 
+                except KeyError:
+                    account_info[values['Id']]['Department']="None"
+                    account_info[values['Id']]['Division']=  "None"
+                    account_info[values['Id']]['Managedby']=  "None"
+                    account_info[values['Id']]['Type']=  "None"
+                    account_info[values['Id']]['Businessowner']=  "None"
+                    account_info[values['Id']]['Techowner']=  "None"
+                    account_info[values['Id']]['Dataclassification']= "None"
+                if values['Id']=='478226638351':
+                    auditrole='arn:aws:iam::478226638351:role/Scout2MgmtEc2Role'
+                    account_info[values['Id']]['CrossAuditRole']=auditrole
+                    account_info[values['Id']]['ac_alias']=boto3.client('iam').list_account_aliases()['AccountAliases'][0]
+                    account_info[values['Id']]['scout2datas3key']=values['Id']+'/'+running_date+'/inc-awsconfig/'+'aws_config.js'
+                    print("Alias Info",iam_client.list_account_aliases()['AccountAliases'])
+                    writedatatodynamodb(ac_table,account_info[values['Id']],values['Id'])
+                    #print(account_info)
+                    continue
+                account_info[values['Id']]['CrossAuditRole']='arn:aws:iam::'+values['Id']+':role/AWSAudit_CrossAccount'
+                try:
+                    assumedRoleObject = sts.assume_role(RoleArn=str('arn:aws:iam::'+values['Id']+':role/AWSAudit_CrossAccount'), RoleSessionName="account_info_lambda")
+                    credentials = assumedRoleObject['Credentials']
+                    iam_client = boto3.client('iam',aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'],)
+                    account_info[values['Id']]['CrossAuditRole']='arn:aws:iam::'+values['Id']+':role/AWSAudit_CrossAccount'
+                #except ClientError:
+                except (ClientError, BotoCoreError) as err:
+                    logging.exception(err)
+                    account_info[values['Id']]['CrossAuditRole']='NotFound'
+                    account_info[values['Id']]['ac_alias']='UnabletoRead'
+                    account_info[values['Id']]['scout2datas3key']='N/A'
+                    writedatatodynamodb(ac_table,account_info[values['Id']],values['Id'])
+                    continue
+                account_info[values['Id']]['ac_alias']=iam_client.list_account_aliases()['AccountAliases'][0]
+                account_info[values['Id']]['scout2datas3key']=values['Id']+'/'+running_date+'/inc-awsconfig/'+'aws_config-'+account_info[values['Id']]['ac_alias']+'.js'
+                #print(account_info)
+                writedatatodynamodb(ac_table,account_info[values['Id']],values['Id'])
+                print("Alisas Info",iam_client.list_account_aliases()['AccountAliases'])
+                cleardict(account_info)
+        if 'NextToken' in list_of_accounts:#['NextToken'] is :
+            NextToken=list_of_accounts['NextToken']
+            print("Next Token Info",NextToken)
+        else:
+            done = True
+    return "success"
+def verifyLogTable(tablename, primarykey):
+    client = boto3.client('dynamodb')
+    resource = boto3.resource('dynamodb')
+    table = tablename
+    response = client.list_tables()
+    tableFound = False
+    for n, _ in enumerate(response['TableNames']):
+        if table in response['TableNames'][n]:
+            table = response['TableNames'][n]
+            tableFound = True
+    if not tableFound:
+        # Table not created in CFn, let's check exact name or create it
+        try:
+            result = client.describe_table(TableName=table)
+        except:
+            # Table does not exist, create it
+            newtable = resource.create_table(
+                TableName=table,
+                KeySchema=[
+                     {
+                        'AttributeName': primarykey,
+                        'KeyType': 'HASH',
+                     },
+                ],   ## Range is sortkey 
+                AttributeDefinitions=[
+                    {   'AttributeName': primarykey, 
+                        'AttributeType': 'S',
+                    },
+                ],
+                ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
+            )
+            # Wait for table creation
+            newtable.meta.client.get_waiter('table_exists').wait(TableName=table)
+    return table
+def clearlist(slis):  # clearing list
+    slis[:] = []
+def cleardict(sdict):  # clearing dictonary
+    sdict.clear()
+def publish_msg_security_team(Subject, Message):
+    try:
+        print("sending sns")
+        #sns_client.publish(TopicArn='arn:aws:sns:us-east-2:478226638351:AWS_Security_Scan_Alerts', Message=Message, Subject=Subject, MessageStructure='string')
+        #sns_client.publish(TopicArn='arn:aws:sns:us-east-2:478226638351:test_sns_poc_personal', Message=Message, Subject=Subject, MessageStructure='string')
+    except Exception as e:
+        raise e
+def clean_empty(d):
+    if not isinstance(d, (dict, list)):
+        return d
+    if isinstance(d, list):
+        return [v for v in (clean_empty(v) for v in d) if v]
+    return {k: v for k, v in ((k, clean_empty(v)) for k, v in d.items()) if v}
+def writedatatodynamodb(update_table,account_info,acid):
+        try:
+            update_table.put_item ( 
+                Item={
+                    'AccountID':acid,
+                    'Alias':account_info['ac_alias'],
+                    'Name':account_info['Name'].split("@")[0],
+                    'Email':account_info['Email'],
+                    'CrossAuditRole':account_info['CrossAuditRole'],
+                    'ReportedOn':str(today_date),
+                    'Status':account_info['Status'],
+                    'JoinedMethod':account_info['JoinedMethod'],
+                    'JoinedTimestamp':str(account_info['JoinedTimestamp']),
+                    'Scout2dataS3key':account_info['scout2datas3key'],
+                    'Department':account_info['Department'],
+                    'Division':account_info['Division'],
+                    'Managedby':account_info['Managedby'],
+                    'Type':account_info['Type'],
+                    'Businessowner':account_info['Businessowner'],
+                    'Techowner':account_info['Techowner'],
+                    'Dataclassification':account_info['Dataclassification'],
+                    }
+                )
+        except Exception as e:
+            raise e
+def scan_table_from_ss(TablenName):
+    retun_ac_list={}
+    try:
+        ss_sts_role = 'arn:aws:iam::620890749476:role/AWSAudit_CrossAccount'  # Org Billing API 
+        assumedRoleObject = sts.assume_role(RoleArn=str(ss_sts_role), RoleSessionName="accounts_watcher_lambda" )
+        credentials = assumedRoleObject['Credentials']
+        dynamo_conn = boto3.resource('dynamodb','us-east-1', aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'],)
+        acnts_table = dynamo_conn.Table(ss_ac_table_name)
+        ac_list=acnts_table.scan(ProjectionExpression="OwnerId,Department,Division,ManagedBy,Type_Acc, \
+                                                    businessowner,techowner,dataclassification",
+                                                    ConsistentRead=True)
+        print(ac_list['Items'])
+        ac_details=ac_list['Items']
+        for item in ac_details:
+            retun_ac_list[item['OwnerId']]={}
+            retun_ac_list[item['OwnerId']]['Division']=item['Division']
+            retun_ac_list[item['OwnerId']]['Department']=item['Department']
+            retun_ac_list[item['OwnerId']]['dataclassification']=item['dataclassification']
+            retun_ac_list[item['OwnerId']]['ManagedBy']=item['ManagedBy']
+            retun_ac_list[item['OwnerId']]['businessowner']=item['businessowner']
+            retun_ac_list[item['OwnerId']]['techowner']=item['techowner']
+            retun_ac_list[item['OwnerId']]['Type_Acc']=item['Type_Acc']
+        print(retun_ac_list)
+    except:
+        raise
+    return retun_ac_list
