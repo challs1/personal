@@ -1,0 +1,72 @@
+[profile default]
+role_arn = arn:aws:iam::478226638351:role/Scout2MgmtEc2Role
+source_profile = default
+[profile Intranet-Sandbox]
+role_arn = arn:aws:iam::799824181982:role/AWSAudit_CrossAccount
+source_profile = default
+[profile Internet-Sandbox]
+role_arn = arn:aws:iam::002710387481:role/AWSAudit_CrossAccount
+source_profile = default
+[profile sharedservices]
+role_arn = arn:aws:iam::620890749476:role/AWSAudit_CrossAccount
+source_profile = default
+[profile orgbilling]
+role_arn = arn:aws:iam::656990482673:role/AWSAudit_CrossAccount
+source_profile = default
+[profile ddswhadoopdev]
+role_arn = arn:aws:iam::944573716837:role/AWSAudit_CrossAccount
+source_profile = default
+[profile ddswhadoopprod]
+role_arn = arn:aws:iam::263363729850:role/AWSAudit_CrossAccount
+source_profile = default
+[profile ecatinnovation]
+role_arn = arn:aws:iam::828711334708:role/AWSAudit_CrossAccount
+source_profile = default
+[profile edsdev]
+role_arn = arn:aws:iam::141576945838:role/AWSAudit_CrossAccount
+source_profile = default
+[profile edsprod]
+role_arn = arn:aws:iam::238298454097:role/AWSAudit_CrossAccount
+source_profile = default
+[profile mdmdev]
+role_arn = arn:aws:iam::520111439412:role/AWSAudit_CrossAccount
+source_profile = default
+[profile mdmprod]
+role_arn = arn:aws:iam::610872094909:role/AWSAudit_CrossAccount
+source_profile = default
+[profile secriskmgmt]
+role_arn = arn:aws:iam::009617208910:role/AWSAudit_CrossAccount
+source_profile = default
+[profile symphonycntlplane]
+role_arn = arn:aws:iam::054518192585:role/AWSAudit_CrossAccount
+source_profile = default
+[profile symphonyprod]
+role_arn = arn:aws:iam::205231843124:role/AWSAudit_CrossAccount
+source_profile = default
+[profile symphonydev]
+role_arn = arn:aws:iam::355391146408:role/AWSAudit_CrossAccount
+source_profile = default
+[profile catweardev]
+role_arn = arn:aws:iam::100178607838:role/AWSAudit_CrossAccount
+source_profile = default
+[profile catwearprod]
+role_arn = arn:aws:iam::642500132467:role/AWSAudit_CrossAccount
+source_profile = default
+[profile catwearstaging]
+role_arn = arn:aws:iam::043691484226:role/AWSAudit_CrossAccount
+source_profile = default
+[profile shareddev1]
+role_arn = arn:aws:iam::327349948073:role/AWSAudit_CrossAccount
+source_profile = default
+[profile sharedprod1]
+role_arn = arn:aws:iam::006172073716:role/AWSAudit_CrossAccount
+source_profile = default
+[profile commerce_prod]
+role_arn = arn:aws:iam::342101340642:role/AWSAudit_CrossAccount
+source_profile = default
+[profile commerce_dev]
+role_arn = arn:aws:iam::158134245097:role/AWSAudit_CrossAccount
+source_profile = default
+[profile symphony_sdr]
+role_arn = arn:aws:iam::944898352560:role/AWSAudit_CrossAccount
+source_profile = default
